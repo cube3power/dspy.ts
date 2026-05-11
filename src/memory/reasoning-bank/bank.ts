@@ -217,6 +217,39 @@ export class ReasoningBank {
   }
 
   /**
+   * Semantic retrieval — embeds `queryText` and pulls the most similar stored
+   * knowledge units from the AgentDB vector index (real similarity search, not
+   * just an in-memory metadata filter like `retrieve()`), then applies the
+   * confidence / success / transferable filters. Returns `PatternMatch`es ranked
+   * by vector similarity.
+   */
+  async retrieveSemantic(
+    queryText: string,
+    query: {
+      minConfidence?: number;
+      successfulOnly?: boolean;
+      transferableOnly?: boolean;
+      limit?: number;
+    } = {}
+  ): Promise<PatternMatch[]> {
+    this.ensureInitialized();
+    const { minConfidence = 0.5, successfulOnly = false, transferableOnly = false, limit = 10 } = query;
+    const emb = await this.embedText(queryText);
+    const hits = await this.agentDB.search(emb, { k: Math.max(limit * 3, limit) });
+    const out: PatternMatch[] = [];
+    for (const h of hits) {
+      const unit = h.data?.metadata?.unit as KnowledgeUnit | undefined;
+      if (!unit) continue;
+      if (unit.confidence < minConfidence) continue;
+      if (successfulOnly && !unit.success) continue;
+      if (transferableOnly && !unit.transferable) continue;
+      out.push({ unit, similarity: h.score, explanation: `semantic match (score ${h.score.toFixed(3)})` });
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
+  /**
    * Evolve knowledge through SAFLA
    */
   async evolve(): Promise<void> {
@@ -424,30 +457,31 @@ export class ReasoningBank {
   }
 
   /**
-   * Generate embedding for knowledge unit
+   * Generate an embedding for a knowledge unit — uses the AgentDB
+   * EmbeddingService (transformers.js / ONNX) when available, falling back to a
+   * deterministic hash embedding so it works in any environment.
    */
   private async generateEmbedding(unit: KnowledgeUnit): Promise<number[]> {
-    // Simple embedding: for now, create a vector from unit properties
-    // In production, use a real embedding model
-    const text = `${unit.pattern} ${unit.reasoning.join(' ')}`;
-    return this.simpleTextEmbedding(text);
+    return this.embedText(`${unit.pattern} ${unit.reasoning.join(' ')}`);
   }
 
-  /**
-   * Simple text embedding (placeholder)
-   */
-  private simpleTextEmbedding(text: string): number[] {
-    // Very simple hash-based embedding for demonstration
-    const dimension = 768;
-    const vector = new Array(dimension).fill(0);
-
-    for (let i = 0; i < text.length; i++) {
-      const charCode = text.charCodeAt(i);
-      vector[i % dimension] += charCode / 1000;
+  /** Embed text via the AgentDB EmbeddingService, with a hash fallback. */
+  private async embedText(text: string): Promise<number[]> {
+    try {
+      return await this.agentDB.embed(text);
+    } catch {
+      return this.fallbackEmbedding(text);
     }
+  }
 
-    // Normalize
-    const magnitude = Math.sqrt(vector.reduce((sum, v) => sum + v * v, 0));
+  /** Deterministic hash-based embedding — used only when no real embedder is available. */
+  private fallbackEmbedding(text: string): number[] {
+    const dimension = 768; // AgentDBClient default vectorDimension
+    const vector = new Array(dimension).fill(0);
+    for (let i = 0; i < text.length; i++) {
+      vector[i % dimension] += text.charCodeAt(i) / 1000;
+    }
+    const magnitude = Math.sqrt(vector.reduce((sum, v) => sum + v * v, 0)) || 1;
     return vector.map((v) => v / magnitude);
   }
 

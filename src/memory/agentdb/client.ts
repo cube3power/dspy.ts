@@ -205,15 +205,29 @@ export class AgentDBClient {
     return this.store(vector, { ...metadata, text });
   }
 
-  /** Embed text → vector via the AgentDB EmbeddingService. Throws if unavailable. */
+  /**
+   * Embed text → vector via the AgentDB EmbeddingService, fitted to this
+   * client's `vectorDimension` (zero-padded if the model is smaller, truncated
+   * if larger) so the result is always safe to pass to `store`/`search`.
+   * Throws if no embedding service is available.
+   */
   async embed(text: string): Promise<number[]> {
     if (!this.embedder || typeof this.embedder.embed !== 'function') {
       throw new Error(
         'EmbeddingService not available — pass vectors directly or run in an environment with agentdb embeddings.'
       );
     }
-    const v = await this.embedder.embed(text);
-    return Array.isArray(v) ? v : Array.from(v as ArrayLike<number>);
+    const raw = await this.embedder.embed(text);
+    const v = Array.isArray(raw) ? raw : Array.from(raw as ArrayLike<number>);
+    return this.fitToDimension(v);
+  }
+
+  /** Zero-pad or truncate a vector to this client's configured dimension. */
+  private fitToDimension(v: number[]): number[] {
+    const d = this.config.vectorDimension;
+    if (v.length === d) return v;
+    if (v.length > d) return v.slice(0, d);
+    return [...v, ...new Array(d - v.length).fill(0)];
   }
 
   async search(query: number[], options: SearchOptions = {}): Promise<SearchResult[]> {
