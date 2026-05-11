@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    name: build + test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [18, 20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm install
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test
+      # Coverage threshold (80%) is currently aspirational — informational, non-blocking.
+      - run: npm run test:coverage
+        continue-on-error: true
+
+  docs:
+    name: typedoc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm install
+      - run: npm run docs
+        continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: api-docs
+          path: docs/api

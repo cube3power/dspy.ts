@@ -8,13 +8,13 @@ export abstract class Module<TInput extends Record<string, any>, TOutput extends
   public readonly name: string;
   public readonly signature: Signature;
   public readonly promptTemplate: (input: TInput) => string;
-  public readonly strategy: 'Predict' | 'ChainOfThought' | 'ReAct';
+  public readonly strategy: 'Predict' | 'ChainOfThought' | 'ReAct' | 'Retrieve';
 
   constructor(options: {
     name: string;
     signature: Signature;
     promptTemplate?: (input: TInput) => string;
-    strategy: 'Predict' | 'ChainOfThought' | 'ReAct';
+    strategy: 'Predict' | 'ChainOfThought' | 'ReAct' | 'Retrieve';
   }) {
     this.name = options.name;
     this.signature = options.signature;

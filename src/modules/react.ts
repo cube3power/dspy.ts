@@ -12,6 +12,7 @@
 import { Module } from '../core/module';
 import { Signature } from '../core/signature';
 import { getLM } from '../lm';
+import { ReActReflexion } from './react-reflexion';
 
 /**
  * Tool that can be used by the ReAct agent
@@ -76,6 +77,8 @@ export interface ReActConfig {
   tools: Tool[];
   maxIterations?: number;
   strategy?: 'ReAct';
+  /** Optional reflexion memory: recall lessons before acting, record episodes after, promote skills. */
+  reflexion?: ReActReflexion;
 }
 
 /**
@@ -87,6 +90,8 @@ export class ReAct<
 > extends Module<TInput, TOutput & { reasoning: string; steps: ReActStep[] }> {
   private tools: Map<string, Tool>;
   private maxIterations: number;
+  private reflexion?: ReActReflexion;
+  private priorLessons: string[] = [];
 
   /**
    * Create a ReAct module
@@ -100,6 +105,7 @@ export class ReAct<
 
     this.tools = new Map(config.tools.map((t) => [t.name.toLowerCase(), t]));
     this.maxIterations = config.maxIterations || 10;
+    this.reflexion = config.reflexion;
 
     // Extend signature to include reasoning and steps
     this.extendSignature();
@@ -141,6 +147,15 @@ export class ReAct<
   ): Promise<TOutput & { reasoning: string; steps: ReActStep[] }> {
     // Validate input
     this.validateInput(input);
+
+    // Recall lessons from past attempts at a similar task (reflexion memory).
+    if (this.reflexion) {
+      try {
+        this.priorLessons = (await this.reflexion.recall(JSON.stringify(input))).lessons;
+      } catch {
+        this.priorLessons = [];
+      }
+    }
 
     // Get language model
     const lm = getLM();
@@ -211,9 +226,26 @@ export class ReAct<
     // Build final output
     const reasoning = this.buildReasoningTrace(steps);
 
+    const reachedAnswer = !!finalAnswer;
     if (!finalAnswer) {
       // Max iterations reached without answer
       finalAnswer = this.extractFallbackAnswer(input, steps);
+    }
+
+    // Record this episode in reflexion memory (and promote skills on repeated success).
+    if (this.reflexion) {
+      const toolSeq = steps.filter((s) => s.type === 'action').map((s) => s.tool ?? '?');
+      try {
+        await this.reflexion.recordEpisode(JSON.stringify(input), {
+          success: reachedAnswer,
+          steps: toolSeq,
+          critique: reachedAnswer
+            ? undefined
+            : `No final answer after ${iteration} iteration(s); tools tried: ${toolSeq.join(' -> ') || '(none)'}.`,
+        });
+      } catch {
+        /* reflexion is best-effort */
+      }
     }
 
     const output = {
@@ -239,6 +271,13 @@ export class ReAct<
 
     parts.push('You are a ReAct agent that alternates between thinking and acting.');
     parts.push('');
+
+    // Lessons recalled from past attempts (reflexion memory)
+    if (this.priorLessons.length > 0) {
+      parts.push('Lessons from past attempts:');
+      this.priorLessons.forEach((l, i) => parts.push(`${i + 1}. ${l}`));
+      parts.push('');
+    }
 
     // Task description
     parts.push('Task:');
