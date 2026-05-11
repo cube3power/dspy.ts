@@ -21,6 +21,7 @@ import { Signature } from '../core/signature';
 import { Optimizer, OptimizerConfig, TrainingExample, MetricFunction } from './base';
 import { getLM } from '../index';
 import { AgentDBClient } from '../memory/agentdb/client';
+import { CompilationTracer } from '../observability/tracer';
 
 export interface MIPROv2Config extends OptimizerConfig {
   /** How many candidate instructions to consider (default 5). */
@@ -47,6 +48,8 @@ export interface MIPROv2Config extends OptimizerConfig {
   replayStore?: AgentDBClient;
   /** How many prior best-instructions to recall and prepend to the search (default 3). */
   replayTopK?: number;
+  /** Observability: trace this compile's trials (causal chain, AgentDB persistence, optional MLflow). */
+  tracer?: CompilationTracer;
 }
 
 /** A module whose prompt = instruction + few-shot demos + the input, calling the global LM. */
@@ -127,9 +130,10 @@ export interface MIPROv2Result {
 }
 
 export class MIPROv2<TInput extends Record<string, any>, TOutput extends Record<string, any>> extends Optimizer<TInput, TOutput> {
-  protected config: Required<Omit<MIPROv2Config, 'minibatchSize' | 'replayStore'>> & {
+  protected config: Required<Omit<MIPROv2Config, 'minibatchSize' | 'replayStore' | 'tracer'>> & {
     minibatchSize?: number;
     replayStore?: AgentDBClient;
+    tracer?: CompilationTracer;
   };
   private optimizedProgram: OptimizedModule<TInput, TOutput> | null = null;
   private lastResult: MIPROv2Result | null = null;
@@ -176,6 +180,16 @@ export class MIPROv2<TInput extends Record<string, any>, TOutput extends Record<
     if (recalled.length > 0) this.log(`MIPROv2: warm-started with ${recalled.length} recalled instruction(s)`);
     this.log(`MIPROv2: ${instructions.length} candidate instructions`);
 
+    const runId = this.config.tracer
+      ? await this.config.tracer.startRun('MIPROv2', {
+          program: mod.name,
+          numTrials: this.config.numTrials,
+          numCandidateInstructions: instructions.length,
+          seed: this.config.seed,
+          warmStarted: recalled.length > 0,
+        })
+      : undefined;
+
     this.log('MIPROv2: bootstrapping demos');
     const { labeled, bootstrapped } = await this.bootstrapDemos(mod, trainset);
     const allDemos = [...labeled, ...bootstrapped];
@@ -195,6 +209,7 @@ export class MIPROv2<TInput extends Record<string, any>, TOutput extends Record<
       const candidate = new OptimizedModule<TInput, TOutput>(mod.name, mod.signature, instruction, demos);
       const score = await this.scoreCandidate(candidate, evalSet);
       trials.push({ instruction, numDemos: demos.length, score });
+      if (runId) await this.config.tracer!.logTrial(runId, { label: `trial-${t + 1}`, params: { numDemos: demos.length }, score });
       if (!best || score > best.score) best = { instruction, demos, score };
     }
 
@@ -219,6 +234,7 @@ export class MIPROv2<TInput extends Record<string, any>, TOutput extends Record<
       warmStarted: recalled.length > 0,
       recalledInstructions: recalled.length,
     };
+    if (runId) await this.config.tracer!.endRun(runId, { bestScore: best.score, trials: trials.length, instruction: best.instruction });
     this.log(`MIPROv2: best score ${best.score.toFixed(3)} with ${best.demos.length} demos`);
     return this.optimizedProgram;
   }
