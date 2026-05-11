@@ -1,866 +1,207 @@
- DSPy.ts 🚀
-
 <div align="center">
 
-[![npm version](https://img.shields.io/npm/v/dspy.ts.svg?style=flat-square)](https://www.npmjs.com/package/dspy.ts)
-[![npm downloads](https://img.shields.io/npm/dm/dspy.ts.svg?style=flat-square)](https://www.npmjs.com/package/dspy.ts)
-[![npm total downloads](https://img.shields.io/npm/dt/dspy.ts.svg?style=flat-square)](https://www.npmjs.com/package/dspy.ts)
-[![GitHub stars](https://img.shields.io/github/stars/ruvnet/dspy.ts.svg?style=flat-square&label=Star)](https://github.com/ruvnet/dspy.ts)
-[![GitHub forks](https://img.shields.io/github/forks/ruvnet/dspy.ts.svg?style=flat-square&label=Fork)](https://github.com/ruvnet/dspy.ts/fork)
-[![GitHub issues](https://img.shields.io/github/issues/ruvnet/dspy.ts.svg?style=flat-square)](https://github.com/ruvnet/dspy.ts/issues)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.7+-blue.svg?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/ruvnet/dspy.ts/ci.yml?style=flat-square)](https://github.com/ruvnet/dspy.ts/actions)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](https://github.com/ruvnet/dspy.ts/pulls)
+[![npm version](https://img.shields.io/npm/v/dspy.ts.svg?style=for-the-badge&logo=npm&color=cb3837)](https://www.npmjs.com/package/dspy.ts)
+[![npm downloads](https://img.shields.io/npm/dm/dspy.ts.svg?style=for-the-badge&logo=npm)](https://www.npmjs.com/package/dspy.ts)
+[![CI](https://img.shields.io/github/actions/workflow/status/ruvnet/dspy.ts/ci.yml?style=for-the-badge&logo=githubactions&logoColor=white&label=CI)](https://github.com/ruvnet/dspy.ts/actions)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.7+-3178c6?style=for-the-badge&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](https://opensource.org/licenses/MIT)
+[![Star on GitHub](https://img.shields.io/github/stars/ruvnet/dspy.ts?style=for-the-badge&logo=github&color=gold)](https://github.com/ruvnet/dspy.ts)
+[![🕸️ AgentDB](https://img.shields.io/badge/AgentDB-vector_memory-06b6d4?style=for-the-badge&logo=graphql&logoColor=white)](https://www.npmjs.com/package/agentdb)
 
-**Program AI Systems, Don't Prompt Them**
+# DSPy.ts
 
-*The TypeScript framework for building compositional AI systems with automatic optimization*
-
-[Get Started](#-quick-start) • [Examples](#-examples) • [Documentation](#-documentation) • [Benchmarks](#-performance-benchmarks) • [Discord](https://discord.gg/dspy)
+**Program AI systems, don't prompt them — in TypeScript, on AgentDB.**
 
 </div>
 
----
+DSPy.ts brings Stanford's [DSPy](https://github.com/stanfordnlp/dspy) to TypeScript: you declare *signatures* (typed input → output), compose them into *modules* and *pipelines*, give an *optimizer* a metric and a handful of examples, and it tunes the prompts and demonstrations for you — no hand-crafted prompt strings. Underneath, everything that needs a vector index, a memory, or a cache runs on [`agentdb`](https://www.npmjs.com/package/agentdb): HNSW search, RaBitQ quantization, ReasoningBank, reflexion. The optimizers *remember what worked* across runs.
 
-## 🎯 What is DSPy.ts?
+### Why DSPy.ts?
 
-DSPy.ts brings Stanford's revolutionary [DSPy framework](https://github.com/stanfordnlp/dspy) to TypeScript and JavaScript. Instead of manually crafting prompts and hoping they work, DSPy.ts lets you **program AI systems** using composable modules that automatically optimize themselves.
+> Prompts are code you can't refactor. DSPy.ts makes the LM program the artifact — a signature plus modules — and lets a metric do the tuning. The TypeScript port adds end-to-end types, runs in Node and the browser, and is built **AgentDB-first**: optimizer trials, ReAct reflexions, and LM responses all persist to a real vector store, so a second `compile()` (or a second agent run) starts from what the first one learned. Built by [`rUv`](https://ruv.io).
 
-### The Problem with Traditional Prompting
+### What DSPy.ts does
 
-```typescript
-// ❌ Traditional Approach: Manual prompting
-const prompt = "Think step by step. Question: What is 2+2? Answer:";
-const response = await llm.generate(prompt);
-// Result is fragile, hard to improve, doesn't learn
+`init` nothing, `npm install dspy.ts`, and your LM program becomes optimizable:
+
+```
+Signature (typed in→out)
+        │
+        ▼
+   Module / Pipeline ──────────────►  LM  (optionally CachingLM — fuzzy AgentDB cache)
+   (Predict · ChainOfThought                       ▲
+    · ReAct(+reflexion) · Retrieve)                │
+        │                                          │
+        ▼                                          │
+   Optimizer  ───►  metric + trainset  ───►  compile()  ──►  Optimized Module
+   (BootstrapFewShot · MIPROv2 · GEPA)               │
+        │                                            │
+        ▼                                            ▼
+   AgentDB  ◄── vectors · RaBitQ · tiers · ReasoningBank · reflexions · experience replay · trace
+   (HNSW)        ▲                                   │
+                 └────────────── warm-start next compile ┘
 ```
 
-### The DSPy.ts Solution
-
-```typescript
-// ✅ DSPy.ts: Programmatic, self-optimizing
-const solver = new ChainOfThought({
-  name: 'MathSolver',
-  signature: {
-    inputs: [{ name: 'question', type: 'string' }],
-    outputs: [{ name: 'answer', type: 'number' }]
-  }
-});
-
-// Automatically optimizes with examples
-const optimizer = new BootstrapFewShot(metric);
-const optimizedSolver = await optimizer.compile(solver, examples);
-```
-
-**Key Differences:**
-- 🔄 **Self-Improving**: Automatically learns from examples
-- 🧩 **Composable**: Build complex systems from simple modules
-- 🎯 **Type-Safe**: Catch errors at compile time
-- 📊 **Metric-Driven**: Optimize for what matters to you
-- 🚀 **Production-Ready**: Built for scale
+> **New to DSPy?** You don't have to touch AgentDB. Define a `signature`, wrap it in `ChainOfThought`, hand a `metric` + a few examples to `BootstrapFewShot`, call `compile()`. Everything else (vector store, caching, reflexion) is opt-in.
 
 ---
 
-## 🆚 DSPy.ts vs DSPy Python
-
-DSPy.ts is a **complete TypeScript implementation** of DSPy's core concepts with additional enterprise features:
-
-| Feature | DSPy Python | DSPy.ts 2.1 | Notes |
-|---------|-------------|-------------|-------|
-| **Core Modules** |
-| Predict | ✅ | ✅ | Basic prediction module |
-| ChainOfThought | ✅ | ✅ | Step-by-step reasoning |
-| ReAct | ✅ | ✅ | Reasoning + Acting with tools |
-| Retrieve | ✅ | ✅ | RAG with vector search |
-| ProgramOfThought | ✅ | ✅ | Code generation & execution |
-| MultiChainComparison | ✅ | ✅ | Compare multiple reasoning paths |
-| Refine | ✅ | ✅ | Constraint-based refinement |
-| majority | ✅ | ✅ | Voting & consensus |
-| Signatures | ✅ | ✅ | Type-safe input/output specs |
-| Pipeline | ✅ | ✅ | Module composition |
-| **Optimizers** |
-| BootstrapFewShot | ✅ | ✅ | Automatic demo generation |
-| MIPROv2 | ✅ | ✅ | Bayesian prompt optimization |
-| COPRO | ✅ | 📋 | Planned |
-| **Evaluation** |
-| Metrics | ✅ | ✅ | F1, BLEU, ROUGE, exactMatch |
-| evaluate() | ✅ | ✅ | Batch evaluation |
-| **Runtime** |
-| Python | ✅ | ❌ | Python 3.9+ |
-| Node.js | ❌ | ✅ | Node.js 18+ |
-| Browser | ❌ | ✅ | Modern browsers |
-| **LM Providers** |
-| OpenAI | ✅ | ✅ | GPT-3.5, GPT-4 |
-| Anthropic | ✅ | ✅ | Claude 3 |
-| Local Models | ✅ | ✅ | ONNX, PyTorch |
-| **Enterprise Features** |
-| AgentDB | ❌ | ✅ | 150x faster vector search |
-| ReasoningBank | ❌ | ✅ | Self-learning memory |
-| Swarm | ❌ | ✅ | Multi-agent orchestration |
-| TypeScript | ❌ | ✅ | Full type safety |
-
-### Why Choose DSPy.ts?
-
-1. **JavaScript/TypeScript Ecosystem**: Use in Node.js, browsers, React, Vue, Next.js
-2. **Type Safety**: Catch errors before runtime
-3. **Modern Tooling**: ESLint, Prettier, VS Code integration
-4. **Enterprise Ready**: AgentDB, ReasoningBank, Swarm for production
-5. **Local & Cloud**: Run models locally (ONNX) or use cloud APIs
-
----
-
-## ⚡ Quick Start
-
-### Installation
+## Quick Start
 
 ```bash
 npm install dspy.ts
-# or
-yarn add dspy.ts
 ```
 
-### Your First DSPy.ts Program
+```ts
+import {
+  ChainOfThought, BootstrapFewShot, MIPROv2,
+  configureLM, DummyLM,           // swap DummyLM for OpenAI / Anthropic / ONNX / torch
+} from 'dspy.ts';
 
-```typescript
-import { ChainOfThought } from 'dspy.ts/modules';
-import { OpenAILM, configureLM } from 'dspy.ts';
+configureLM(new DummyLM());       // or your provider
 
-// 1. Configure your language model
-const lm = new OpenAILM({
-  apiKey: process.env.OPENAI_API_KEY,
-  model: 'gpt-3.5-turbo'
-});
-
-await lm.init();
-configureLM(lm);
-
-// 2. Define your module
-const solver = new ChainOfThought({
-  name: 'MathSolver',
+// 1. Declare a typed signature
+const qa = new ChainOfThought<{ question: string }, { answer: string }>({
+  name: 'QA',
   signature: {
-    inputs: [
-      { name: 'question', type: 'string', required: true }
-    ],
-    outputs: [
-      { name: 'answer', type: 'number', required: true },
-      { name: 'explanation', type: 'string', required: false }
-    ]
-  }
+    inputs:  [{ name: 'question', type: 'string', required: true }],
+    outputs: [{ name: 'answer',   type: 'string', required: true }],
+  },
 });
 
-// 3. Use it!
-const result = await solver.run({
-  question: 'If Alice has 5 apples and gives 2 to Bob, how many does she have?'
-});
+// 2. Optimize it against a metric + a handful of examples
+const metric = (_in: { question: string }, out: { answer: string }, gold?: { answer: string }) =>
+  gold && out.answer?.trim() === gold.answer ? 1 : out.answer ? 0.3 : 0;
 
-console.log(result.reasoning);   // "Let me think step by step..."
-console.log(result.answer);      // 3
-console.log(result.explanation); // "Alice started with 5..."
-```
-
-**Output:**
-```
-Reasoning: Let me think step by step:
-1. Alice starts with 5 apples
-2. She gives 2 apples to Bob
-3. To find how many she has left, I subtract: 5 - 2 = 3
-
-Answer: 3
-Explanation: Alice started with 5 apples and gave away 2, leaving her with 3 apples.
-```
-
----
-
-## 📚 Core Concepts
-
-### 1. Signatures: Type-Safe I/O Specs
-
-Signatures define what your module expects and produces:
-
-```typescript
-const signature = {
-  inputs: [
-    { name: 'context', type: 'string', description: 'Background information' },
-    { name: 'question', type: 'string', description: 'Question to answer' }
-  ],
-  outputs: [
-    { name: 'answer', type: 'string', description: 'The answer' },
-    { name: 'confidence', type: 'number', description: 'Confidence 0-1' }
-  ]
-};
-```
-
-### 2. Modules: Composable AI Components
-
-Build complex systems from simple building blocks:
-
-```typescript
-import { PredictModule, ChainOfThought, ReAct } from 'dspy.ts/modules';
-
-// Simple prediction
-const predictor = new PredictModule({ name: 'Predictor', signature });
-
-// Reasoning
-const reasoner = new ChainOfThought({ name: 'Reasoner', signature });
-
-// Acting with tools
-const agent = new ReAct({
-  name: 'Agent',
-  signature,
-  tools: [searchTool, calculatorTool]
-});
-```
-
-### 3. Pipelines: Chain Modules Together
-
-```typescript
-import { Pipeline } from 'dspy.ts/core';
-
-const qaSystem = new Pipeline([
-  new DocumentRetriever(),
-  new ContextAnalyzer(),
-  new AnswerGenerator(),
-  new ConfidenceScorer()
-]);
-
-const result = await qaSystem.run({ question: 'What is DSPy?' });
-```
-
-### 4. Optimizers: Automatic Improvement
-
-```typescript
-import { BootstrapFewShot } from 'dspy.ts/optimize';
-
-// Define success metric
-const metric = (example, prediction) => {
-  return prediction.answer === example.answer ? 1.0 : 0.0;
-};
-
-// Prepare training data
 const trainset = [
-  { question: 'What is 2+2?', answer: '4' },
-  { question: 'What is 3*3?', answer: '9' },
-  // ... more examples
+  { input: { question: 'capital of France?' }, output: { answer: 'Paris' } },
+  { input: { question: '2 + 2?' },             output: { answer: '4' } },
+  { input: { question: 'largest planet?' } },              // unlabeled → bootstrapped demo
 ];
 
-// Optimize!
-const optimizer = new BootstrapFewShot(metric);
-const optimized = await optimizer.compile(solver, trainset);
+const compiled = await new BootstrapFewShot(metric).compile(qa, trainset);
+const { answer } = await compiled.run({ question: 'capital of Italy?' });
+```
 
-// Now 'optimized' performs better on similar tasks
+### RAG in three lines — `Retrieve → ChainOfThought`
+
+```ts
+import { AgentDBClient, RetrieveModule } from 'dspy.ts';
+
+const store = new AgentDBClient({ vectorDimension: 384, storage: { inMemory: true } });
+await store.init();
+await store.storeText('Paris is the capital of France.');
+await store.storeText('Rome is the capital of Italy.');
+
+const retrieve = new RetrieveModule({ client: store, k: 3, useMMR: true });   // MMR-diversified
+const { passages, context } = await retrieve.run({ query: 'what is the capital of Italy?' });
+// feed `context` into a ChainOfThought("question, context -> answer")
+```
+
+### Cross-run learning — MIPROv2 with experience replay
+
+```ts
+import { MIPROv2, CompilationTracer } from 'dspy.ts';
+
+const replay = new AgentDBClient({ vectorDimension: 64, storage: { inMemory: true } });
+await replay.init();
+const tracer = new CompilationTracer({ store: replay });   // causal-chain observability
+
+const opt = new MIPROv2(metric, { numTrials: 12, replayStore: replay, tracer });
+await opt.compile(qa, trainset);
+// a later compile of the same task fingerprint warm-starts from the prior best instruction:
+//   opt2.result.warmStarted === true
 ```
 
 ---
 
-## 🎓 Tutorial: Building a Question-Answering System
+## What you get
 
-Let's build a complete QA system step by step.
+| | Capability | Why it matters |
+|---|---|---|
+| 🧩 | **Composable, typed modules** | `Predict`, `ChainOfThought`, `ReAct`, `Retrieve`, `Pipeline` — declare a signature once, get end-to-end TypeScript types on inputs and outputs. |
+| 🎯 | **Self-optimizing** | `BootstrapFewShot`, `MIPROv2`, `GEPA` — hand them a metric + examples; they tune instructions and demonstrations and hand back an `OptimizedModule`. Deterministic per `seed`; `save()`/`load()`. |
+| 🧬 | **GEPA prompt evolution** | Genetic-Pareto: a per-example-scored Pareto frontier of prompt candidates, reflect-on-weakest → mutate → admit-if-non-dominated. The frontier persists to AgentDB and re-runs warm-start. |
+| ♻️ | **Experience replay** | MIPROv2 persists each compile's winning instruction (keyed by a task fingerprint); a later `compile()` of a similar task starts from what worked — stock DSPy starts cold every time. |
+| 🔎 | **Input-conditioned few-shot** | `BootstrapFewShot` can pick, *per input at run time*, the demos nearest the current input (vector search) instead of a fixed set. |
+| 📚 | **RAG, built-in** | `RetrieveModule` over the AgentDB vector store with Maximal-Marginal-Relevance diversity re-rank → declarative `Retrieve → ChainOfThought` pipelines. |
+| 🪞 | **ReAct reflexion** | `ReActReflexion` over AgentDB: recall lessons from failed past attempts before acting, record episodes after, and promote a tool sub-strategy to a *skill* once it succeeds repeatedly. |
+| 💾 | **AgentDB memory** | `AgentDBClient` — HNSW vector search, RaBitQ 1-bit quantization (~32× smaller), hierarchical tiers (`working`/`short`/`long`), `ReasoningBank` with semantic retrieval. Real `agentdb` classes; pure-JS fallback when native deps are absent. |
+| ⚡ | **Fuzzy LM cache** | `CachingLM` wraps any `LMDriver` and serves `generate()` from an AgentDB vector cache — a near-identical prompt is a hit (cosine ≥ threshold, options + TTL aware). |
+| 📈 | **Observability** | `CompilationTracer` records optimizer runs + trials as a causal chain (`causedBy` per trial), persisted to AgentDB; optional `@mlflow/tracking` logging when that dep is present. |
+| 🔌 | **Multi-provider LM** | OpenAI, Anthropic, local ONNX, js-pytorch — `configureLM(driver)`, or compose `CachingLM` around any of them. |
 
-### Step 1: Set Up Language Model
+<details>
+<summary><strong>Modules</strong></summary>
 
-```typescript
-import { OpenAILM, configureLM } from 'dspy.ts';
+| Module | What it does |
+|--------|--------------|
+| `PredictModule` | Single-step typed prediction — format a prompt from the signature, call the LM, parse the structured output. |
+| `ChainOfThought` | Step-by-step reasoning before the answer. |
+| `ReAct` | Reasoning + Acting: alternates thoughts and tool calls until a final answer. Optional `reflexion` config (see `ReActReflexion`). |
+| `ReActReflexion` | Episodic memory for `ReAct` — `recall(taskKey)` lessons + skill plans, `recordEpisode(...)`, promote repeated successful tool sequences to skills. AgentDB-backed. |
+| `RetrieveModule` | Vector retrieval over an `AgentDBClient` with MMR diversity; returns `{ passages, context }` for downstream modules. |
+| `Pipeline` | Compose modules into a multi-step program with per-step timing and error capture. |
 
-const lm = new OpenAILM({
-  apiKey: process.env.OPENAI_API_KEY,
-  model: 'gpt-4',
-  defaultOptions: {
-    temperature: 0.7,
-    maxTokens: 500
-  }
-});
+</details>
 
-await lm.init();
-configureLM(lm);
-```
+<details>
+<summary><strong>Optimizers</strong></summary>
 
-### Step 2: Define Your Signature
+| Optimizer | What it does |
+|-----------|--------------|
+| `BootstrapFewShot` | Labeled demos from the trainset + bootstrapped demos (run the program, keep what scores ≥ `minScore`). Optional `dynamicDemos: { store, k }` for input-conditioned demo selection at run time. |
+| `MIPROv2` | Instruction proposal (LM + template set + the program's own prompt) → demo bootstrapping → seeded search over (instruction × demo-subset) scored on a trainset minibatch → best `OptimizedModule`. `result` exposes the full trial trace. Optional `replayStore` (cross-run warm-start) and `tracer`. |
+| `GEPA` | Genetic-Pareto reflective prompt evolution — per-example Pareto frontier, reflect on a candidate's weakest examples → mutate → evaluate → admit if non-dominated → prune. `result` exposes `best` / `frontier` / `reflections`. Optional `frontierStore` (persist + warm-start). |
+| `Optimizer` (base) | `compile(program, trainset)` + `save()` / `load()` — extend it for your own search. |
 
-```typescript
-const qaSignature = {
-  inputs: [
-    {
-      name: 'context',
-      type: 'string',
-      description: 'Relevant context from documents',
-      required: true
-    },
-    {
-      name: 'question',
-      type: 'string',
-      description: 'User question',
-      required: true
-    }
-  ],
-  outputs: [
-    {
-      name: 'answer',
-      type: 'string',
-      description: 'Answer to the question',
-      required: true
-    },
-    {
-      name: 'citations',
-      type: 'string',
-      description: 'Sources used',
-      required: false
-    }
-  ]
-};
-```
+</details>
 
-### Step 3: Create Specialized Modules
+<details>
+<summary><strong>AgentDB memory layer</strong></summary>
 
-```typescript
-import { ChainOfThought } from 'dspy.ts/modules';
+`AgentDBClient` is the substrate the rest of DSPy.ts builds on:
 
-// Module 1: Analyze context
-const contextAnalyzer = new ChainOfThought({
-  name: 'ContextAnalyzer',
-  signature: {
-    inputs: [
-      { name: 'context', type: 'string', required: true },
-      { name: 'question', type: 'string', required: true }
-    ],
-    outputs: [
-      { name: 'relevant_facts', type: 'string', required: true }
-    ]
-  }
-});
+- **Vector store** — `store` / `storeText` / `search` / `searchText` / `update` / `delete` / `batchStore` / `getStats`, with `k` / `minScore` / `includeVectors`, a search cache, and stats. Backed by `agentdb`'s `EnhancedEmbeddingService` (transformers.js / ONNX) for text → vector; falls back to a deterministic `hashEmbed` when native deps aren't available.
+- **RaBitQ quantization** — `performance.quantization: 'rabitq'` stores a 1-bit-per-dimension sign code (~32× smaller than float32); search becomes a Hamming coarse-filter → cosine re-rank of the top `rerankFactor × k`. `quantizationInfo()` reports the mode and compression ratio.
+- **Hierarchical tiers** — `store(v, m, { tier })` (`working` | `short` | `long`, default `long`), `searchTiered({ tiers })`, `promote(id, tier)`, `evictTier(tier, { maxAgeMs, max })`, `tierCounts()`.
+- **`ReasoningBank` + `SAFLA`** — knowledge units learned from experiences, embedded via the AgentDB EmbeddingService; `retrieveSemantic(queryText, …)` does real vector search over stored units; SAFLA prunes/evolves the knowledge base.
 
-// Module 2: Generate answer
-const answerGenerator = new ChainOfThought({
-  name: 'AnswerGenerator',
-  signature: qaSignature
-});
-```
+> Some integrations (`agentdb.ReflexionMemory` / `SkillLibrary` / `CausalMemoryGraph`) are currently layered on the `AgentDBClient` vector store with the same behaviour — delegating to those classes directly needs a sql.js `db` handle that `AgentDBClient` doesn't yet expose. Tracked on the issues below.
 
-### Step 4: Build Pipeline
+</details>
 
-```typescript
-import { Pipeline } from 'dspy.ts/core';
+<details>
+<summary><strong>Examples</strong></summary>
 
-const qaSystem = new Pipeline([
-  contextAnalyzer,
-  answerGenerator
-], {
-  retryAttempts: 2,
-  stopOnError: false,
-  debug: true
-});
-```
+`examples/` includes runnable demos — classification, chain-of-thought, ReAct (incl. a tool agent), fine-tuning, optimization, sentiment, MIPROv2, GEPA (`examples/gepa/`), and AgentDB-backed retrieval (`examples/retrieve/`). Run with `npx ts-node examples/<dir>/index.ts`.
 
-### Step 5: Use the System
-
-```typescript
-const context = `
-  DSPy is a framework for algorithmically optimizing LM prompts and weights.
-  It was developed at Stanford NLP by Omar Khattab and team.
-  DSPy treats prompts as parameters to optimize, not strings to manually craft.
-`;
-
-const result = await qaSystem.run({
-  context,
-  question: 'Who developed DSPy?'
-});
-
-console.log(result.answer);     // "DSPy was developed by Omar Khattab and team at Stanford NLP"
-console.log(result.citations);  // "Stanford NLP"
-```
-
-### Step 6: Optimize Performance
-
-```typescript
-import { BootstrapFewShot } from 'dspy.ts/optimize';
-
-// Collect training examples
-const trainset = [
-  {
-    context: '...',
-    question: 'Who developed DSPy?',
-    answer: 'Omar Khattab and team at Stanford NLP'
-  },
-  // ... more examples
-];
-
-// Define metric
-const exactMatch = (example, prediction) => {
-  const correct = prediction.answer.toLowerCase()
-    .includes(example.answer.toLowerCase());
-  return correct ? 1.0 : 0.0;
-};
-
-// Optimize
-const optimizer = new BootstrapFewShot(exactMatch, {
-  maxBootstrappedDemos: 4,
-  maxLabeledDemos: 4
-});
-
-const optimizedQA = await optimizer.compile(qaSystem, trainset);
-
-// Test improvement
-console.log('Before optimization:', await qaSystem.run(testCase));
-console.log('After optimization:', await optimizedQA.run(testCase));
-```
+</details>
 
 ---
 
-## 🛠️ Advanced Features
-
-### ReAct: Agents with Tools
-
-Build agents that can reason and use tools:
-
-```typescript
-import { ReAct, Tool } from 'dspy.ts/modules';
-
-// Define tools
-const calculatorTool: Tool = {
-  name: 'calculator',
-  description: 'Performs arithmetic calculations',
-  execute: async (expression: string) => {
-    return eval(expression).toString();
-  }
-};
-
-const searchTool: Tool = {
-  name: 'search',
-  description: 'Searches for information',
-  execute: async (query: string) => {
-    // Call your search API
-    return await searchAPI(query);
-  }
-};
-
-// Create agent
-const agent = new ReAct({
-  name: 'ResearchAgent',
-  signature: {
-    inputs: [{ name: 'task', type: 'string', required: true }],
-    outputs: [{ name: 'result', type: 'string', required: true }]
-  },
-  tools: [calculatorTool, searchTool],
-  maxIterations: 10
-});
-
-// Use agent
-const result = await agent.run({
-  task: 'Find the current price of Bitcoin and calculate 10% of it'
-});
-
-console.log(result.steps);    // Shows thought → action → observation cycle
-console.log(result.result);   // Final answer with calculations
-```
-
-### Multi-Agent Systems with Swarm
-
-Coordinate multiple AI agents:
-
-```typescript
-import { SwarmOrchestrator } from 'dspy.ts/agent/swarm';
-
-const swarm = new SwarmOrchestrator();
-
-// Agent 1: Research
-swarm.addAgent({
-  id: 'researcher',
-  name: 'Research Agent',
-  routine: {
-    instructions: 'Research and gather information',
-    tools: [searchTool],
-    execute: async (input, context) => {
-      // Research logic
-      return { output: facts, success: true, context };
-    }
-  },
-  handoffs: [{
-    targetAgent: 'writer',
-    condition: (context) => context.get('research_complete'),
-    transferContext: ['facts', 'sources']
-  }],
-  context: new Map()
-});
-
-// Agent 2: Writing
-swarm.addAgent({
-  id: 'writer',
-  name: 'Writing Agent',
-  routine: {
-    instructions: 'Write based on research',
-    tools: [],
-    execute: async (input, context) => {
-      // Writing logic
-      return { output: article, success: true, context };
-    }
-  },
-  handoffs: [],
-  context: new Map()
-});
-
-// Execute multi-agent task
-const result = await swarm.execute({
-  id: 'write-article',
-  input: { topic: 'AI Safety' },
-  startAgent: 'researcher'
-});
-```
-
-### Memory Systems: AgentDB & ReasoningBank
-
-Persistent memory for AI agents:
-
-```typescript
-import { AgentDBClient } from 'dspy.ts/memory/agentdb';
-import { ReasoningBank } from 'dspy.ts/memory/reasoning-bank';
-
-// Vector database with 150x faster search
-const agentDB = new AgentDBClient({
-  vectorDimension: 768,
-  indexType: 'hnsw',
-  frontierMemory: {
-    causalReasoning: true,
-    reflexionMemory: true,
-    skillLibrary: true
-  }
-});
-
-await agentDB.init();
-
-// Self-learning memory system
-const reasoningBank = new ReasoningBank(agentDB);
-await reasoningBank.init();
-
-// Learn from experience
-await reasoningBank.learnFromExperience({
-  input: { question: 'What is 2+2?' },
-  output: { answer: 4 },
-  success: true,
-  reasoning: ['Identify operation', 'Add numbers', 'Return result'],
-  context: {
-    domain: 'math',
-    inputFeatures: { type: 'arithmetic' },
-    conditions: {}
-  },
-  timestamp: new Date()
-});
-
-// Retrieve relevant knowledge
-const knowledge = await reasoningBank.retrieve({
-  context: { domain: 'math' },
-  minConfidence: 0.7,
-  limit: 5
-});
-```
-
----
-
-## 📊 Performance Benchmarks
-
-DSPy.ts 2.0 has been extensively benchmarked to ensure production-grade performance:
-
-### Module Performance
-
-| Module | Average Latency | Throughput | Target | Status |
-|--------|----------------|------------|---------|--------|
-| PredictModule | 120ms | 8.3 ops/sec | < 200ms | ✅ Pass |
-| ChainOfThought | 180ms | 5.5 ops/sec | < 250ms | ✅ Pass |
-| ReAct (3 steps) | 340ms | 2.9 ops/sec | < 500ms | ✅ Pass |
-| Pipeline (2 modules) | 250ms | 4.0 ops/sec | < 400ms | ✅ Pass |
-
-### Memory System Performance
-
-| Operation | Average Latency | Throughput | Target | Status |
-|-----------|----------------|------------|---------|--------|
-| AgentDB Store | 5ms | 200 ops/sec | < 10ms | ✅ Pass |
-| AgentDB Search (k=10) | 8ms | 125 ops/sec | < 10ms | ✅ Pass |
-| ReasoningBank Learn | 35ms | 28 ops/sec | < 50ms | ✅ Pass |
-| ReasoningBank Retrieve | 12ms | 83 ops/sec | < 20ms | ✅ Pass |
-
-### Agent System Performance
-
-| Operation | Average Latency | Target | Status |
-|-----------|----------------|---------|--------|
-| Swarm Task Execution | 42ms | < 50ms | ✅ Pass |
-| Agent Handoff | 15ms | < 50ms | ✅ Pass |
-| Multi-Agent (3 agents) | 180ms | < 300ms | ✅ Pass |
-
-### Optimization Performance
-
-| Optimizer | Training Time (10 examples) | Improvement | Status |
-|-----------|---------------------------|-------------|--------|
-| BootstrapFewShot | 1.8s | +15-25% accuracy | ✅ Pass |
-
-**Test Environment**: Node.js 18, 4-core CPU, 16GB RAM, gpt-3.5-turbo
-
-### Performance Comparison: DSPy.ts vs Manual Prompting
-
-```typescript
-// Benchmark: Question Answering Accuracy
-
-Manual Prompting:  65% accuracy ❌
-DSPy.ts (unoptimized): 72% accuracy ⚠️
-DSPy.ts (optimized):   87% accuracy ✅
-
-// Improvement: +22% over manual prompting
-// Optimization time: < 2 seconds
-```
-
----
-
-## 🎯 Examples
-
-### Example 1: Sentiment Analysis
-
-```typescript
-import { PredictModule } from 'dspy.ts/modules';
-
-const sentimentAnalyzer = new PredictModule({
-  name: 'SentimentAnalyzer',
-  signature: {
-    inputs: [{ name: 'text', type: 'string', required: true }],
-    outputs: [
-      { name: 'sentiment', type: 'string', required: true },
-      { name: 'confidence', type: 'number', required: true }
-    ]
-  }
-});
-
-const result = await sentimentAnalyzer.run({
-  text: 'I love this product! It works great!'
-});
-
-console.log(result.sentiment);   // "positive"
-console.log(result.confidence);  // 0.95
-```
-
-### Example 2: Code Generation
-
-```typescript
-import { ChainOfThought } from 'dspy.ts/modules';
-
-const codeGenerator = new ChainOfThought({
-  name: 'CodeGenerator',
-  signature: {
-    inputs: [
-      { name: 'description', type: 'string', required: true },
-      { name: 'language', type: 'string', required: true }
-    ],
-    outputs: [
-      { name: 'code', type: 'string', required: true },
-      { name: 'explanation', type: 'string', required: true }
-    ]
-  }
-});
-
-const result = await codeGenerator.run({
-  description: 'Function to calculate fibonacci numbers',
-  language: 'typescript'
-});
-
-console.log(result.reasoning);    // Shows thought process
-console.log(result.code);         // Generated code
-console.log(result.explanation);  // Code explanation
-```
-
-### Example 3: Data Extraction
-
-```typescript
-const extractor = new ChainOfThought({
-  name: 'DataExtractor',
-  signature: {
-    inputs: [{ name: 'document', type: 'string', required: true }],
-    outputs: [
-      { name: 'name', type: 'string', required: true },
-      { name: 'email', type: 'string', required: true },
-      { name: 'phone', type: 'string', required: false }
-    ]
-  }
-});
-
-const result = await extractor.run({
-  document: 'Contact John Doe at john@example.com or 555-1234'
-});
-
-// Automatically extracts structured data
-```
-
-### Interactive CLI Demos
-
-DSPy.ts includes 6 comprehensive CLI demos showcasing all major features. Run them with OpenRouter for access to multiple LLM providers:
-
-```bash
-# Set up your OpenRouter API key
-export OPENROUTER_API_KEY="your-key-here"
-
-# Run the interactive demo menu
-cd examples/cli
-npx ts-node demo-runner.ts
-
-# Or run specific demos
-npx ts-node demo-runner.ts simple-qa
-npx ts-node demo-runner.ts rag-agentdb
-npx ts-node demo-runner.ts reasoning-bank
-npx ts-node demo-runner.ts multi-agent
-npx ts-node demo-runner.ts optimization
-npx ts-node demo-runner.ts program-of-thought
-
-# Use different models
-MODEL=anthropic/claude-3-opus npx ts-node demo-runner.ts simple-qa
-```
-
-**Available Demos:**
-
-1. **Simple Q&A** (`simple-qa`) - Chain-of-Thought reasoning with step-by-step explanations
-2. **RAG with AgentDB** (`rag-agentdb`) - Retrieval-Augmented Generation with 150x faster vector search
-3. **ReasoningBank Learning** (`reasoning-bank`) - Self-learning system with SAFLA algorithm
-4. **Multi-Agent Swarm** (`multi-agent`) - Orchestrated agents with intelligent handoffs
-5. **MIPROv2 Optimization** (`optimization`) - Automatic prompt optimization with Bayesian methods
-6. **Program-of-Thought** (`program-of-thought`) - Code generation and sandboxed execution for precise calculations
-
-Each demo includes:
-- ✅ Complete working code
-- ✅ Detailed console output with formatting
-- ✅ Error handling and best practices
-- ✅ Multiple test cases
-- ✅ Feature explanations
-
-More examples in the [examples/](examples/) directory!
-
----
-
-## 🏗️ Architecture
-
-DSPy.ts follows a modular, layered architecture:
-
-```
-┌─────────────────────────────────────────┐
-│         Applications & Examples          │
-├─────────────────────────────────────────┤
-│  Modules: Predict, ChainOfThought, ReAct│
-├─────────────────────────────────────────┤
-│    Optimizers: Bootstrap, MIPROv2        │
-├─────────────────────────────────────────┤
-│   Core: Signatures, Pipeline, Factory    │
-├─────────────────────────────────────────┤
-│  Memory: AgentDB, ReasoningBank, Swarm   │
-├─────────────────────────────────────────┤
-│  LM Drivers: OpenAI, Anthropic, ONNX     │
-└─────────────────────────────────────────┘
-```
-
-### Key Components
-
-- **Core**: Type-safe module system, signatures, pipelines
-- **Modules**: Pre-built AI components (Predict, ChainOfThought, ReAct)
-- **Optimizers**: Automatic improvement algorithms
-- **Memory**: Persistent storage (AgentDB, ReasoningBank)
-- **Agents**: Multi-agent orchestration (Swarm)
-- **LM Drivers**: Model integrations (OpenAI, Anthropic, local models)
-
----
-
-## 📖 Documentation
-
-- **[Getting Started Guide](docs/guides/getting-started.md)**: Complete setup tutorial
-- **[API Reference](docs/api/README.md)**: Full API documentation
-- **[Module Types](docs/guides/module-types.md)**: Guide to different modules
-- **[Optimizers Guide](docs/guides/optimizers.md)**: How to optimize your systems
-- **[Examples](examples/)**: Working code examples
-- **[Migration Guide](MIGRATION.md)**: Upgrading from 0.1.x to 2.0
-
----
-
-## 🗺️ Roadmap
-
-### Upcoming Features
-
-We're committed to achieving 100% DSPy Python compliance and expanding capabilities. Here's what's next:
-
-#### Core Modules (Q1 2025)
-- ⏳ **MIPROv2 Optimizer** - Mixed Initiative Prompting with confidence scoring
-- ⏳ **GEPA Optimizer** - Gradient-based prompt optimization
-- ⏳ **GRPO Optimizer** - Group Relative Policy Optimization
-- ⏳ **Retrieve Module** - RAG (Retrieval-Augmented Generation) support
-- ⏳ **Assert/Suggest** - Constraint enforcement and suggestions
-
-#### Infrastructure Improvements (Q2 2025)
-- ⏳ **Test Coverage 100%** - Comprehensive test suite for all modules
-- ⏳ **CI/CD Pipeline** - Automated testing and deployment
-- ⏳ **Performance Monitoring** - MLflow integration and telemetry
-- ⏳ **Documentation Portal** - Interactive docs with live examples
-
-#### Advanced Capabilities (Q2-Q3 2025)
-- ⏳ **Reflexion Module** - Self-reflection and improvement
-- ⏳ **Causal Reasoning** - Advanced causal inference
-- ⏳ **Multi-Modal Support** - Vision and audio model integration
-- ⏳ **Distributed Training** - Multi-node optimization support
-
-#### Community Features (Ongoing)
-- ⏳ **Module Marketplace** - Share and discover community modules
-- ⏳ **Example Gallery** - Curated collection of real-world use cases
-- ⏳ **Interactive Playground** - Browser-based experimentation
-- ⏳ **Video Tutorials** - Step-by-step video guides
-
-**Current Completion**: 75% DSPy Python compliance
-**Target**: 100% by Q3 2025
-
----
-
-## 🤝 Contributing
-
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-### Development Setup
-
-```bash
-git clone https://github.com/ruvnet/dspy.ts.git
-cd dspy.ts
-npm install --legacy-peer-deps
-npm run build
-npm test
-```
-
----
-
-## 📜 License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
----
-
-## 🙏 Acknowledgments
-
-DSPy.ts is inspired by and based on Stanford's [DSPy](https://github.com/stanfordnlp/dspy) framework. We extend our gratitude to:
-
-- **Omar Khattab** and the Stanford NLP team for creating DSPy
-- The DSPy community for inspiration and feedback
-- All contributors to this TypeScript implementation
-
----
-
-## 🔗 Links
-
-- **NPM Package**: https://www.npmjs.com/package/dspy.ts
-- **GitHub Repository**: https://github.com/ruvnet/dspy.ts
-- **Documentation**: https://github.com/ruvnet/dspy.ts/tree/main/docs
-- **Discord Community**: https://discord.gg/dspy
-- **Stanford DSPy**: https://github.com/stanfordnlp/dspy
-
----
-
-## 📈 Stats
-
-![npm downloads](https://img.shields.io/npm/dt/dspy.ts.svg)
-![GitHub stars](https://img.shields.io/github/stars/ruvnet/dspy.ts.svg)
-![Contributors](https://img.shields.io/github/contributors/ruvnet/dspy.ts.svg)
-
----
-
-<div align="center">
-
-**Built with ❤️ by [rUv](https://github.com/ruvnet)**
-
-**[⬆ Back to Top](#dspyts-)**
-
-</div>
+## Documentation
+
+| Doc | Where |
+|-----|-------|
+| **API reference** | `npm run docs` → `docs/api/` (TypeDoc) — also built in CI. |
+| **Examples** | [`examples/`](./examples/) |
+| **Migration notes** | [`MIGRATION.md`](./MIGRATION.md) · [`IMPLEMENTATION_SUMMARY.md`](./IMPLEMENTATION_SUMMARY.md) |
+| **Changelog** | [`CHANGELOG.md`](./CHANGELOG.md) |
+| **Issues / roadmap** | [github.com/ruvnet/dspy.ts/issues](https://github.com/ruvnet/dspy.ts/issues) |
+
+## Roadmap & known limitations
+
+DSPy.ts is moving fast; current honest gaps (tracked on the issues):
+
+- ONNX `generate()` returns a shape summary, not full text — needs a real tokenizer + autoregressive decode loop.
+- `agentdb.HNSWIndex` is pattern-table-backed (not a generic KNN store), so `AgentDBClient`'s search is currently a JS cosine scan — wiring `agentdb.WASMVectorSearch` (or a ReasoningBank-style table) would speed it up.
+- Delegate ReAct reflexion / skills / compilation traces to `agentdb.ReflexionMemory` / `SkillLibrary` / `CausalMemoryGraph` directly once `AgentDBClient` exposes a `db` handle.
+- Consolidate the two LM registries (`src/lm/base` vs the package root).
+- A Bayesian surrogate over MIPROv2's search grid; a surrogate-guided / true multi-objective Pareto sampler for GEPA.
+- Broader test coverage (`agent/swarm`, `lm/providers`, `modules/chain-of-thought` are still light); the CI coverage gate is informational for now.
+- `npm run lint` needs the ESLint-9 flat-config migration.
+
+## License
+
+MIT — [rUv / ruvnet](https://github.com/ruvnet)
