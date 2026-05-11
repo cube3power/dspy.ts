@@ -108,6 +108,22 @@ export class AgentDBClient {
     return this.backend?.native ?? null;
   }
 
+  /** The configured vector dimension. */
+  get vectorDimension(): number {
+    return this.config.vectorDimension;
+  }
+
+  /** Deterministic hash embedding of `text`, fitted to this client's dimension —
+   *  useful for keying records (e.g. optimizer experience replay) without needing
+   *  a real embedding model. */
+  hashEmbed(text: string): number[] {
+    const d = this.config.vectorDimension;
+    const v = new Array(d).fill(0);
+    for (let i = 0; i < text.length; i++) v[i % d] += text.charCodeAt(i) / 1000;
+    const mag = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
+    return v.map((x) => x / mag);
+  }
+
   async init(): Promise<void> {
     if (this.initialized) {
       this.logger.warn('AgentDB client already initialized');

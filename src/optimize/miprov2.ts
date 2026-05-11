@@ -20,6 +20,7 @@ import { Pipeline } from '../core/pipeline';
 import { Signature } from '../core/signature';
 import { Optimizer, OptimizerConfig, TrainingExample, MetricFunction } from './base';
 import { getLM } from '../index';
+import { AgentDBClient } from '../memory/agentdb/client';
 
 export interface MIPROv2Config extends OptimizerConfig {
   /** How many candidate instructions to consider (default 5). */
@@ -36,6 +37,16 @@ export interface MIPROv2Config extends OptimizerConfig {
   minibatchSize?: number;
   /** Deterministic RNG seed for the random search (default 42). */
   seed?: number;
+  /**
+   * Experience replay: an AgentDB client to persist each compile's best
+   * (instruction, score) for a task fingerprint and recall it on later compiles
+   * — so the search warm-starts from instructions that worked before, across
+   * runs. (`agentdb.LearningSystem`-backed RL bandit over instruction choices is
+   * a deeper variant tracked on #8.)
+   */
+  replayStore?: AgentDBClient;
+  /** How many prior best-instructions to recall and prepend to the search (default 3). */
+  replayTopK?: number;
 }
 
 /** A module whose prompt = instruction + few-shot demos + the input, calling the global LM. */
@@ -109,10 +120,17 @@ export interface MIPROv2Result {
   demos: TrainingExample[];
   score: number;
   trials: Array<{ instruction: string; numDemos: number; score: number }>;
+  /** True if the search was seeded with instructions recalled from a replay store. */
+  warmStarted: boolean;
+  /** How many prior best-instructions were recalled and prepended to the search. */
+  recalledInstructions: number;
 }
 
 export class MIPROv2<TInput extends Record<string, any>, TOutput extends Record<string, any>> extends Optimizer<TInput, TOutput> {
-  protected config: Required<Omit<MIPROv2Config, 'minibatchSize'>> & { minibatchSize?: number };
+  protected config: Required<Omit<MIPROv2Config, 'minibatchSize' | 'replayStore'>> & {
+    minibatchSize?: number;
+    replayStore?: AgentDBClient;
+  };
   private optimizedProgram: OptimizedModule<TInput, TOutput> | null = null;
   private lastResult: MIPROv2Result | null = null;
 
@@ -128,6 +146,7 @@ export class MIPROv2<TInput extends Record<string, any>, TOutput extends Record<
       maxBootstrappedDemos: 4,
       minDemoScore: 0.5,
       seed: 42,
+      replayTopK: 3,
       ...config,
     };
   }
@@ -146,7 +165,15 @@ export class MIPROv2<TInput extends Record<string, any>, TOutput extends Record<
       throw new Error('MIPROv2.compile expects a Module (with a signature), not a raw Pipeline');
     }
     this.log('MIPROv2: proposing instructions');
-    const instructions = await this.proposeInstructions(mod);
+    const proposed = await this.proposeInstructions(mod);
+
+    // Experience replay: warm-start the search with instructions that worked
+    // before for a similar task fingerprint.
+    const fingerprint = this.taskFingerprint(mod);
+    const recalled = this.config.replayStore ? await this.recallPriorInstructions(this.config.replayStore, fingerprint) : [];
+    const seen = new Set<string>();
+    const instructions = [...recalled, ...proposed].filter((s) => (seen.has(s) ? false : (seen.add(s), true)));
+    if (recalled.length > 0) this.log(`MIPROv2: warm-started with ${recalled.length} recalled instruction(s)`);
     this.log(`MIPROv2: ${instructions.length} candidate instructions`);
 
     this.log('MIPROv2: bootstrapping demos');
@@ -174,10 +201,57 @@ export class MIPROv2<TInput extends Record<string, any>, TOutput extends Record<
     // Fallback: if there was nothing to evaluate, just take the first instruction + all demos.
     if (!best) best = { instruction: instructions[0], demos: allDemos, score: 0 };
 
+    // Persist this compile's best for future warm-starts.
+    if (this.config.replayStore) {
+      try {
+        await this.recordBest(this.config.replayStore, fingerprint, best.instruction, best.score, best.demos.length);
+      } catch (err) {
+        this.log(`replay record failed: ${err}`);
+      }
+    }
+
     this.optimizedProgram = new OptimizedModule<TInput, TOutput>(mod.name, mod.signature, best.instruction, best.demos);
-    this.lastResult = { instruction: best.instruction, demos: best.demos, score: best.score, trials };
+    this.lastResult = {
+      instruction: best.instruction,
+      demos: best.demos,
+      score: best.score,
+      trials,
+      warmStarted: recalled.length > 0,
+      recalledInstructions: recalled.length,
+    };
     this.log(`MIPROv2: best score ${best.score.toFixed(3)} with ${best.demos.length} demos`);
     return this.optimizedProgram;
+  }
+
+  /** A stable identity for a task — used to key experience-replay records. */
+  private taskFingerprint(program: Module<TInput, TOutput>): string {
+    const ins = program.signature.inputs.map((f) => `${f.name}:${f.type}`).join(',');
+    const outs = program.signature.outputs.map((f) => `${f.name}:${f.type}`).join(',');
+    return `${program.name}|in[${ins}]|out[${outs}]`;
+  }
+
+  /** Recall the best instructions from prior compiles of a similar task. */
+  private async recallPriorInstructions(client: AgentDBClient, fingerprint: string): Promise<string[]> {
+    try {
+      const fpVec = client.hashEmbed(fingerprint);
+      const hits = await client.search(fpVec, { k: Math.max(this.config.replayTopK * 6, 12) });
+      const prior = hits
+        .filter((h) => h.score > 0.95 && h.data.metadata?.type === 'mipro-best' && h.data.metadata?.fingerprint === fingerprint)
+        .map((h) => ({ instruction: String(h.data.metadata.instruction ?? ''), score: Number(h.data.metadata.score ?? 0) }))
+        .filter((p) => p.instruction.length > 0)
+        .sort((a, b) => b.score - a.score);
+      const seen = new Set<string>();
+      const uniq = prior.filter((p) => (seen.has(p.instruction) ? false : (seen.add(p.instruction), true)));
+      return uniq.slice(0, this.config.replayTopK).map((p) => p.instruction);
+    } catch {
+      return [];
+    }
+  }
+
+  /** Record this compile's winning (instruction, score) for the task fingerprint. */
+  private async recordBest(client: AgentDBClient, fingerprint: string, instruction: string, score: number, numDemos: number): Promise<void> {
+    const fpVec = client.hashEmbed(fingerprint);
+    await client.store(fpVec, { type: 'mipro-best', fingerprint, instruction, score, numDemos, ts: Date.now() });
   }
 
   private async proposeInstructions(program: Module<TInput, TOutput>): Promise<string[]> {
