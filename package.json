@@ -1,6 +1,6 @@
 {
   "name": "dspy.ts",
-  "version": "2.0.0",
+  "version": "2.1.2",
   "description": "DSPy.ts 2.0 - Advanced declarative AI framework with multi-agent orchestration, self-learning capabilities, and state-of-the-art optimizers. Powered by AgentDB, ReasoningBank, and Swarm architecture.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc",
     "build:prod": "tsc --project tsconfig.prod.json",
-    "test": "jest --coverage",
+    "test": "jest",
     "test:unit": "jest --testPathPattern=tests/unit",
     "test:integration": "jest --testPathPattern=tests/integration",
     "test:watch": "jest --watch",
@@ -22,7 +22,8 @@
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run test && npm run build",
     "docs": "typedoc --out docs/api src/index.ts",
-    "clean": "rm -rf dist coverage"
+    "clean": "rm -rf dist coverage",
+    "test:coverage": "jest --coverage"
   },
   "repository": {
     "type": "git",
@@ -81,7 +82,7 @@
     "prettier": "^3.5.2",
     "ts-jest": "^29.2.5",
     "typescript": "^5.7.3",
-    "typedoc": "^0.26.0",
+    "typedoc": "^0.27.0",
     "@types/async-retry": "^1.4.8",
     "@types/pino": "^7.0.5"
   },

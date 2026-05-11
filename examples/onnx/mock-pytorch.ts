@@ -17,16 +17,31 @@ export const nn = {
   }))
 };
 
-export const tensor = jest.fn().mockImplementation((data: number[] | Float32Array, options?: { requiresGrad?: boolean }) => ({
+// Flat tensor stub — must NOT recursively construct child tensors, otherwise
+// `tensor(...)` overflows the stack (each child's `.add`/`.pow`/… eagerly
+// builds another tensor → infinite recursion).
+const tensorStub = () => ({
+  shape: [1],
+  dataSync: jest.fn().mockReturnValue(new Float32Array([0])),
+  add: jest.fn(),
+  pow: jest.fn(),
+  sum: jest.fn(),
+  backward: jest.fn(),
+  relu: jest.fn(),
+  to: jest.fn(),
+  copy_: jest.fn(),
+});
+
+export const tensor = jest.fn().mockImplementation((data: number[] | Float32Array, _options?: { requiresGrad?: boolean }) => ({
   shape: Array.isArray(data) ? [data.length] : [data.byteLength / 4],
   dataSync: jest.fn().mockReturnValue(Array.isArray(data) ? new Float32Array(data) : data),
-  add: jest.fn().mockReturnValue(tensor([0])),
-  pow: jest.fn().mockReturnValue(tensor([0])),
-  sum: jest.fn().mockReturnValue(tensor([0])),
+  add: jest.fn(() => tensorStub()),
+  pow: jest.fn(() => tensorStub()),
+  sum: jest.fn(() => tensorStub()),
   backward: jest.fn(),
-  relu: jest.fn().mockReturnValue(tensor([0])),
-  to: jest.fn().mockReturnValue(tensor([0])),
-  copy_: jest.fn()
+  relu: jest.fn(() => tensorStub()),
+  to: jest.fn(() => tensorStub()),
+  copy_: jest.fn(),
 }));
 
 export const device = jest.fn().mockImplementation((type: string) => ({ type }));

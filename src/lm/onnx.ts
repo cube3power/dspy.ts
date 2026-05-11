@@ -82,8 +82,14 @@ export class ONNXModel implements LMDriver {
   public async cleanup(): Promise<void> {
     try {
       if (this.session) {
-        // Release the session resources
-        await this.session.release();
+        // `release()` lives on the runtime InferenceSession implementation but
+        // is not part of the public `InferenceSession` interface in newer
+        // onnxruntime-web (>=1.21). Call it if present; otherwise drop the
+        // reference and let GC reclaim the WASM session.
+        const releasable = this.session as { release?: () => Promise<void> };
+        if (typeof releasable.release === 'function') {
+          await releasable.release();
+        }
         this.session = null;
       }
     } catch (error) {
@@ -126,9 +132,43 @@ export class ONNXModel implements LMDriver {
   }
 
   /**
-   * Process output tensor to text
+   * Run the ONNX model on a prompt and return a textual representation of the
+   * output tensor. When a tokenizer is configured the output is decoded; otherwise
+   * a shape summary is returned (full text generation requires a real tokenizer +
+   * autoregressive decode loop — tracked as a known limitation).
    */
-  public async generate(prompt: string, options?: GenerationOptions): Promise<string> {
-    throw new LMError('Text generation not supported by this model');
+  public async generate(prompt: string, _options?: GenerationOptions): Promise<string> {
+    if (!this.session) {
+      throw new LMError('ONNX model not initialized. Call init() first.');
+    }
+
+    try {
+      const inputTensors = await this.prepareInputs({ input: prompt });
+      const outputs = await this.session.run(inputTensors);
+
+      const firstKey = outputs && typeof outputs === 'object' ? Object.keys(outputs)[0] : undefined;
+      const outputTensor = firstKey ? (outputs as Record<string, unknown>)[firstKey] : undefined;
+
+      if (
+        !outputTensor ||
+        typeof outputTensor !== 'object' ||
+        !Array.isArray((outputTensor as { dims?: unknown }).dims)
+      ) {
+        throw new LMError('Invalid output tensor format');
+      }
+
+      const dims = (outputTensor as { dims: number[] }).dims;
+      const shapeStr = `shape: ${dims.join('x')}`;
+      const data = (outputTensor as { data?: unknown }).data;
+
+      if (this.tokenizer && data) {
+        const decoded = this.tokenizer.decode(data as Float32Array);
+        return `${decoded} (${shapeStr})`;
+      }
+      return `ONNX output ${shapeStr}`;
+    } catch (error) {
+      if (error instanceof LMError) throw error;
+      throw new LMError('ONNX model inference failed', error as Error);
+    }
   }
 }

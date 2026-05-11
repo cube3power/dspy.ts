@@ -57,7 +57,7 @@ export class Pipeline {
    * Execute the pipeline with initial input
    */
   public async run(initialInput: any): Promise<PipelineResult> {
-    const startTime = Date.now();
+    const startTime = performance.now();
     const steps: StepResult[] = [];
     let currentData = initialInput;
 
@@ -81,7 +81,7 @@ export class Pipeline {
       return {
         finalOutput: currentData,
         steps,
-        totalDuration: Date.now() - startTime,
+        totalDuration: performance.now() - startTime,
         success: true
       };
     } catch (error) {
@@ -96,7 +96,7 @@ export class Pipeline {
     module: Module<any, any>,
     input: any
   ): Promise<StepResult> {
-    const stepStart = Date.now();
+    const stepStart = performance.now();
     let lastError: Error | undefined;
 
     for (let attempt = 0; attempt <= this.config.maxRetries; attempt++) {
@@ -112,7 +112,7 @@ export class Pipeline {
           moduleName: module.name,
           input,
           output,
-          duration: Date.now() - stepStart
+          duration: performance.now() - stepStart
         };
       } catch (error) {
         lastError = error as Error;
@@ -124,7 +124,7 @@ export class Pipeline {
       moduleName: module.name,
       input,
       output: input,  // On failure, pass through original input
-      duration: Date.now() - stepStart,
+      duration: performance.now() - stepStart,
       error: lastError
     };
   }
@@ -140,7 +140,7 @@ export class Pipeline {
     return {
       finalOutput: null,
       steps,
-      totalDuration: Date.now() - startTime,
+      totalDuration: performance.now() - startTime,
       success: false,
       error
     };
