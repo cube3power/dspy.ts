@@ -9,3 +9,4 @@ export * from './dummy';
 export * from './onnx';
 export * from './torch';
 export * from './providers';
+export * from './caching';
