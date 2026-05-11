@@ -100,6 +100,20 @@ export interface AgentDBConfig {
      * Enable batch operations
      */
     batchEnabled: boolean;
+
+    /**
+     * Vector quantization. `'rabitq'` stores a 1-bit-per-dimension sign code
+     * alongside each vector (~32× smaller than float32), searches with Hamming
+     * distance as a coarse filter, then re-ranks the top `rerankFactor × k`
+     * candidates with full cosine. `'none'` (default) keeps full-precision search.
+     */
+    quantization?: 'none' | 'rabitq';
+
+    /**
+     * Over-sampling factor for the RaBitQ coarse pass (default 3): the Hamming
+     * pre-filter keeps `rerankFactor × k` candidates before cosine re-rank.
+     */
+    rerankFactor?: number;
   };
 }
 
@@ -130,6 +144,8 @@ export const DEFAULT_AGENTDB_CONFIG: AgentDBConfig = {
     maxConcurrency: 10,
     cacheSize: 1000,
     batchEnabled: true,
+    quantization: 'none',
+    rerankFactor: 3,
   },
 };
 

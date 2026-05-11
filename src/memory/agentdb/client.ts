@@ -19,6 +19,34 @@ import {
   AgentDBStats,
 } from './types';
 
+/**
+ * Hierarchical memory tiers. `working` is small/ephemeral scratch space,
+ * `short` is recent context, `long` is the durable searchable store.
+ */
+export type MemoryTier = 'working' | 'short' | 'long';
+
+/** RaBitQ-style 1-bit-per-dimension sign code (bit i = vector[i] >= 0). */
+function packBits(vector: number[]): Uint8Array {
+  const out = new Uint8Array(Math.ceil(vector.length / 8));
+  for (let i = 0; i < vector.length; i++) {
+    if (vector[i] >= 0) out[i >> 3] |= 1 << (i & 7);
+  }
+  return out;
+}
+
+/** Hamming distance between two equal-length packed bit codes. */
+function hamming(a: Uint8Array, b: Uint8Array): number {
+  let d = 0;
+  for (let i = 0; i < a.length; i++) {
+    let x = a[i] ^ b[i];
+    while (x) {
+      x &= x - 1;
+      d++;
+    }
+  }
+  return d;
+}
+
 /** Minimal vector backend used both for the real HNSW path and the fallback. */
 interface VectorBackend {
   insert(id: string, vector: number[], metadata: Record<string, any>): Promise<void>;
@@ -46,6 +74,10 @@ export class AgentDBClient {
   private nativeBackend = false;
   private cache = new Map<string, SearchResult[]>();
   private metaStore = new Map<string, VectorData>();
+  /** Packed 1-bit codes per id (only populated when quantization === 'rabitq'). */
+  private bitStore = new Map<string, Uint8Array>();
+  /** Hierarchical tier per id (default 'long'). */
+  private itemTier = new Map<string, MemoryTier>();
   private stats: AgentDBStats = {
     totalVectors: 0,
     indexSize: 0,
@@ -140,7 +172,11 @@ export class AgentDBClient {
     };
   }
 
-  async store(vector: number[], metadata: Record<string, any> = {}): Promise<string> {
+  async store(
+    vector: number[],
+    metadata: Record<string, any> = {},
+    opts: { tier?: MemoryTier } = {}
+  ): Promise<string> {
     this.ensureInitialized();
     if (vector.length !== this.config.vectorDimension) {
       throw new Error(
@@ -155,6 +191,8 @@ export class AgentDBClient {
       maxTimeout: 1000,
     });
     this.metaStore.set(id, { id, vector, metadata, createdAt: now, updatedAt: now });
+    this.itemTier.set(id, opts.tier ?? 'long');
+    if (this.config.performance.quantization === 'rabitq') this.bitStore.set(id, packBits(vector));
     this.stats.totalVectors = this.backend!.size();
     this.invalidateCache();
     return id;
@@ -192,10 +230,13 @@ export class AgentDBClient {
     }
 
     const startTime = performance.now();
-    const raw = await retry(
-      () => this.backend!.search(query, k, Object.keys(filter).length > 0 ? filter : undefined),
-      { retries: 3, minTimeout: 100, maxTimeout: 1000 }
-    );
+    const useRabitq = this.config.performance.quantization === 'rabitq' && this.bitStore.size > 0;
+    const raw = useRabitq
+      ? this.coarseThenRerank(query, k)
+      : await retry(
+          () => this.backend!.search(query, k, Object.keys(filter).length > 0 ? filter : undefined),
+          { retries: 3, minTimeout: 100, maxTimeout: 1000 }
+        );
 
     const results: SearchResult[] = raw
       .map((r) => {
@@ -226,6 +267,95 @@ export class AgentDBClient {
     return this.search(await this.embed(query), options);
   }
 
+  /** RaBitQ coarse pass (Hamming) → cosine re-rank of the top `rerankFactor × k`. */
+  private coarseThenRerank(query: number[], k: number) {
+    const qBits = packBits(query);
+    const rerankFactor = this.config.performance.rerankFactor ?? 3;
+    const coarse: Array<{ id: string; h: number }> = [];
+    for (const [id, b] of this.bitStore.entries()) coarse.push({ id, h: hamming(qBits, b) });
+    coarse.sort((a, b) => a.h - b.h);
+    return coarse
+      .slice(0, Math.max(k * rerankFactor, k))
+      .map(({ id }) => {
+        const meta = this.metaStore.get(id);
+        const score = meta ? AgentDBClient.cosineSimilarity(query, meta.vector) : 0;
+        return { id, score, distance: 1 - score, vector: meta?.vector, metadata: meta?.metadata };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, k);
+  }
+
+  /** Search only the given hierarchical tiers (cosine over the tier-filtered subset). */
+  async searchTiered(
+    query: number[],
+    options: { tiers: MemoryTier[]; k?: number; minScore?: number; includeVectors?: boolean }
+  ): Promise<SearchResult[]> {
+    this.ensureInitialized();
+    const { tiers, k = 10, minScore = 0, includeVectors = false } = options;
+    const allow = new Set(tiers);
+    const start = performance.now();
+    const scored: SearchResult[] = [];
+    for (const [id, meta] of this.metaStore.entries()) {
+      if (!allow.has(this.itemTier.get(id) ?? 'long')) continue;
+      const score = AgentDBClient.cosineSimilarity(query, meta.vector);
+      if (score < minScore) continue;
+      scored.push({
+        id,
+        score,
+        distance: 1 - score,
+        data: {
+          id,
+          vector: includeVectors ? meta.vector : [],
+          metadata: meta.metadata,
+          createdAt: meta.createdAt,
+          updatedAt: meta.updatedAt,
+        },
+      });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    this.updateSearchStats(performance.now() - start);
+    this.recomputeCacheHitRate();
+    return scored.slice(0, k);
+  }
+
+  /** Move an item to a different hierarchical tier. */
+  promote(id: string, tier: MemoryTier): void {
+    if (this.metaStore.has(id)) this.itemTier.set(id, tier);
+  }
+
+  /** Evict items from a tier — by age (`maxAgeMs`) and/or by count cap (`max`, oldest first). Returns the number evicted. */
+  async evictTier(tier: MemoryTier, opts: { maxAgeMs?: number; max?: number } = {}): Promise<number> {
+    this.ensureInitialized();
+    const now = Date.now();
+    const inTier = [...this.metaStore.values()].filter((m) => (this.itemTier.get(m.id) ?? 'long') === tier);
+    const toEvict = new Set<string>();
+    if (typeof opts.maxAgeMs === 'number') {
+      for (const m of inTier) if (now - m.createdAt.getTime() > opts.maxAgeMs) toEvict.add(m.id);
+    }
+    if (typeof opts.max === 'number' && inTier.length - toEvict.size > opts.max) {
+      const survivors = inTier
+        .filter((m) => !toEvict.has(m.id))
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      for (let i = 0; i < survivors.length - opts.max; i++) toEvict.add(survivors[i].id);
+    }
+    for (const id of toEvict) await this.delete(id);
+    return toEvict.size;
+  }
+
+  /** Per-tier item counts. */
+  tierCounts(): Record<MemoryTier, number> {
+    const c: Record<MemoryTier, number> = { working: 0, short: 0, long: 0 };
+    for (const t of this.itemTier.values()) c[t]++;
+    return c;
+  }
+
+  /** Quantization mode + the float32 → 1-bit-code compression ratio. */
+  quantizationInfo(): { mode: 'none' | 'rabitq'; codes: number; compressionRatio: number } {
+    const mode = this.config.performance.quantization ?? 'none';
+    const ratio = (this.config.vectorDimension * 4) / Math.max(1, Math.ceil(this.config.vectorDimension / 8));
+    return { mode, codes: this.bitStore.size, compressionRatio: ratio };
+  }
+
   async update(id: string, data: Partial<Pick<VectorData, 'vector' | 'metadata'>>): Promise<void> {
     this.ensureInitialized();
     const existing = this.metaStore.get(id);
@@ -246,6 +376,7 @@ export class AgentDBClient {
       createdAt: existing?.createdAt ?? new Date(),
       updatedAt: new Date(),
     });
+    if (this.config.performance.quantization === 'rabitq') this.bitStore.set(id, packBits(vector));
     this.invalidateCache();
   }
 
@@ -253,6 +384,8 @@ export class AgentDBClient {
     this.ensureInitialized();
     await retry(() => this.backend!.remove(id), { retries: 3, minTimeout: 100, maxTimeout: 1000 });
     this.metaStore.delete(id);
+    this.bitStore.delete(id);
+    this.itemTier.delete(id);
     this.stats.totalVectors = this.backend!.size();
     this.invalidateCache();
   }
@@ -287,6 +420,8 @@ export class AgentDBClient {
     }
     this.cache.clear();
     this.metaStore.clear();
+    this.bitStore.clear();
+    this.itemTier.clear();
     this.initialized = false;
   }
 
